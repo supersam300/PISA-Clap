@@ -1,0 +1,8 @@
+torch
+librosa
+transformers
+IPython
+sounddevice
+soundfile
+openai
+litellm
