@@ -1,3 +1,3 @@
-import clap 
+from . import clap
 
 __all__ = ["clap"]

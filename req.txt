@@ -1,8 +1,10 @@
 torch
 librosa
 transformers
+sentencepiece
 IPython
 sounddevice
 soundfile
 openai
 litellm
+gradio
