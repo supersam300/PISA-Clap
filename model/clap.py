@@ -4,10 +4,15 @@ from typing import List, Sequence, Tuple
 
 import librosa
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from transformers import ClapModel, ClapProcessor
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+_MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
+_PUMP_WEIGHTS = os.path.join(_MODEL_DIR, "jedi", "pump_classifier.pth")
+ABNORMAL_TRIGGER_THRESHOLD = 0.25
 
 FS = 48000
 MODEL_NAME = "laion/clap-htsat-unfused"
@@ -16,8 +21,42 @@ AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "audio
 _processor = None
 _model = None
 
-candidate_labels = [
-    "normal machine operating hum",
+_bin_model = None
+
+
+class PfaultClassifier(nn.Module):
+    def __init__(self, ebbeding_dim=512):
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Linear(ebbeding_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 2),
+        )
+
+    def forward(self, x):
+        return self.network(x)
+
+
+def _load_bin_model():
+    global _bin_model
+    if _bin_model is not None:
+        return _bin_model
+    if not os.path.isfile(_PUMP_WEIGHTS):
+        return None
+    try:
+        device = get_device()
+        m = PfaultClassifier().to(device)
+        m.load_state_dict(torch.load(_PUMP_WEIGHTS, map_location=device))
+        m.eval()
+        _bin_model = m
+        return _bin_model
+    except Exception:
+        return None
+
+
+NORMAL_LABEL = "normal machine operating hum"
+ABNORMAL_CANDIDATE_LABELS = [
     "continuous low-frequency rumble",
     "intermittent metallic clacking",
     "repetitive tapping or knocking",
@@ -25,6 +64,7 @@ candidate_labels = [
     "air leak or hissing noise",
     "grinding noise from worn bearings",
 ]
+candidate_labels = [NORMAL_LABEL, *ABNORMAL_CANDIDATE_LABELS]
 
 
 def get_device() -> str:
@@ -133,6 +173,47 @@ def classify_audio_path(audio_path: str, labels: Sequence[str] = None) -> List[T
     return rank_text_for_audio(audio_file, labels)
 
 
+def is_faulty(audio_path: str) -> int:
+    """Return 1 if FFNN predicts abnormal, 0 if normal."""
+    bin_model = _load_bin_model()
+    if bin_model is None:
+        return 1
+    audio_file, _ = load_audio_48k_mono(audio_path)
+    audio_vector = get_audio_embedding(audio_file)
+    with torch.no_grad():
+        logits = bin_model(audio_vector)
+        probs = torch.softmax(logits, dim=1)
+        abnormal_prob = float(probs[:, 1].item())
+        return 1 if abnormal_prob >= ABNORMAL_TRIGGER_THRESHOLD else 0
+
+
+def classify_audio_path_two_pass(
+    audio_path: str, abnormal_labels: Sequence[str] = None
+) -> dict:
+    """Two-pass inference: FFNN gate first, CLAP ranking only for abnormal sounds."""
+    prediction = is_faulty(audio_path)
+    if prediction == 0:
+        return {
+            "is_abnormal": False,
+            "ranked_results": [(NORMAL_LABEL, 1.0)],
+            "top_label": NORMAL_LABEL,
+            "top_score": 1.0,
+            "stage": "ffnn_only",
+        }
+
+    labels = list(abnormal_labels) if abnormal_labels is not None else ABNORMAL_CANDIDATE_LABELS
+    ranked = classify_audio_path(audio_path, labels=labels)
+    if not ranked:
+        raise ValueError("No CLAP result produced for abnormal audio.")
+    return {
+        "is_abnormal": True,
+        "ranked_results": ranked,
+        "top_label": ranked[0][0],
+        "top_score": ranked[0][1],
+        "stage": "ffnn_then_clap",
+    }
+
+
 def clap_model(recording=None, audio=None):
     recordings = _resolve_recordings(recording=recording, audio=audio)
     results_all = []
@@ -140,7 +221,8 @@ def clap_model(recording=None, audio=None):
     for current_rec in recordings:
         audio_path = resolve_audio_path(current_rec)
         try:
-            res = classify_audio_path(audio_path)
+            pass_result = classify_audio_path_two_pass(audio_path)
+            res = pass_result["ranked_results"]
         except Exception as e:
             print(f"Error loading {audio_path}: {e}")
             continue
@@ -162,4 +244,3 @@ if __name__ == "__main__":
 
     recorded_file = record_audio()
     clap_model(recording=recorded_file)
-    

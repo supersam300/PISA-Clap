@@ -47,7 +47,7 @@ def build_gradio_app(gr):
     with gr.Blocks(title="CLAP Maintenance Analyzer") as demo:
         gr.Markdown(
             "# CLAP Maintenance Analyzer\n"
-            "Upload or record machine audio to get CLAP-based issue detection, maintenance priority, and Gemini diagnosis."
+            "Upload or record machine audio to get CLAP-based issue detection, maintenance priority, and  diagnosis."
         )
 
         with gr.Row():
@@ -67,7 +67,7 @@ def build_gradio_app(gr):
                 top_signal_box = gr.Textbox(label="Top CLAP Signal", interactive=False)
 
         diagnosis_box = gr.Textbox(
-            label=" Diagnosis",
+            label="Diagnosis",
             lines=6,
             interactive=False,
         )

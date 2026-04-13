@@ -1,14 +1,14 @@
 import json
 import os
 from typing import Dict, List, Tuple
-
-from model.clap import classify_audio_path
+from .clap import NORMAL_LABEL, classify_audio_path_two_pass
 
 try:
     from litellm import completion
 except Exception:
     completion = None
 
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini/gemini-1.5-flash")
 
 _ISSUE_KEYWORDS = {
     "continuous low-frequency rumble": "Possible imbalance, misalignment, or loosened mounting.",
@@ -30,9 +30,9 @@ _SEVERE_LABELS = {
 def _priority_from_label_score(label: str, score: float, issue_detected: bool) -> str:
     if not issue_detected:
         return "NONE"
-    if label in _SEVERE_LABELS and score >= 0.30:
+    if label in _SEVERE_LABELS and score >= 0.35:
         return "HIGH"
-    if score >= 0.18:
+    if score >= 0.20:
         return "MEDIUM"
     return "LOW"
 
@@ -68,7 +68,6 @@ def _gemini_description(audio_path: str, ranked: List[Tuple[str, float]], issue_
     if completion is None:
         return _fallback_description(ranked[0][0], ranked[0][1], issue_detected, priority)
 
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini/gemini-1.5-flash")
     top_items = [{"label": label, "score": round(score, 4)} for label, score in ranked[:5]]
     prompt_payload = {
         "audio_path": audio_path,
@@ -82,7 +81,7 @@ def _gemini_description(audio_path: str, ranked: List[Tuple[str, float]], issue_
     }
     try:
         response = completion(
-            model=gemini_model,
+            model=_GEMINI_MODEL,
             temperature=0,
             max_tokens=220,
             messages=[
@@ -103,23 +102,33 @@ def _gemini_description(audio_path: str, ranked: List[Tuple[str, float]], issue_
 
 
 def analyze_maintenance(audio_path: str) -> Dict:
-    ranked = classify_audio_path(audio_path)
+    two_pass = classify_audio_path_two_pass(audio_path)
+    ranked = two_pass["ranked_results"]
     if not ranked:
-        raise ValueError("No CLAP result produced for audio.")
+        raise ValueError("No analysis result produced for audio.")
 
     top_label, top_score = ranked[0]
-    issue_detected = _detect_issue(top_label, top_score)
-    priority = _priority_from_label_score(top_label, top_score, issue_detected)
-    description = _gemini_description(audio_path, ranked, issue_detected, priority)
+    if not two_pass["is_abnormal"]:
+        issue_detected = False
+        priority = "NONE"
+        description = (
+            "FFNN gate classified this clip as normal machine operation. "
+            "CLAP deep analysis was skipped."
+        )
+    else:
+        issue_detected = _detect_issue(top_label, top_score)
+        priority = _priority_from_label_score(top_label, top_score, issue_detected)
+        description = _gemini_description(audio_path, ranked, issue_detected, priority)
 
     return {
         "audio_path": audio_path,
-        "top_label": top_label,
-        "top_score": top_score,
+        "top_label": top_label if two_pass["is_abnormal"] else NORMAL_LABEL,
+        "top_score": top_score if two_pass["is_abnormal"] else 1.0,
         "issue_detected": issue_detected,
         "maintenance_priority": priority,
         "ranked_results": ranked,
         "description": description,
+        "analysis_stage": two_pass["stage"],
     }
 
 
