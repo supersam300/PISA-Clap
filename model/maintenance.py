@@ -9,6 +9,12 @@ except Exception:
     completion = None
 
 _GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini/gemini-1.5-flash")
+_ENABLE_GEMINI_DIAGNOSIS = os.getenv("ENABLE_GEMINI_DIAGNOSIS", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+_GEMINI_TIMEOUT_SEC = float(os.getenv("GEMINI_TIMEOUT_SEC", "8"))
 
 _ISSUE_KEYWORDS = {
     "continuous low-frequency rumble": "Possible imbalance, misalignment, or loosened mounting.",
@@ -65,7 +71,7 @@ def _fallback_description(
 
 
 def _gemini_description(audio_path: str, ranked: List[Tuple[str, float]], issue_detected: bool, priority: str) -> str:
-    if completion is None:
+    if completion is None or not _ENABLE_GEMINI_DIAGNOSIS:
         return _fallback_description(ranked[0][0], ranked[0][1], issue_detected, priority)
 
     top_items = [{"label": label, "score": round(score, 4)} for label, score in ranked[:5]]
@@ -84,6 +90,8 @@ def _gemini_description(audio_path: str, ranked: List[Tuple[str, float]], issue_
             model=_GEMINI_MODEL,
             temperature=0,
             max_tokens=220,
+            timeout=_GEMINI_TIMEOUT_SEC,
+            num_retries=0,
             messages=[
                 {
                     "role": "system",
@@ -112,8 +120,8 @@ def analyze_maintenance(audio_path: str) -> Dict:
         issue_detected = False
         priority = "NONE"
         description = (
-            "FFNN gate classified this clip as normal machine operation. "
-            "CLAP deep analysis was skipped."
+            "normal machine operation. "
+            "deep analysis was skipped."
         )
     else:
         issue_detected = _detect_issue(top_label, top_score)

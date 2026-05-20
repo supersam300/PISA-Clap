@@ -23,6 +23,10 @@ _model = None
 
 _bin_model = None
 
+## build a pass to classify object
+##this is done
+## build a function to switch FFNN?????
+
 
 class PfaultClassifier(nn.Module):
     def __init__(self, ebbeding_dim=512):
@@ -86,7 +90,32 @@ def _get_processor_and_model() -> Tuple[ClapProcessor, ClapModel]:
 
 
 def load_audio_48k_mono(audio_path: str):
-    return librosa.load(audio_path, sr=FS, mono=True)
+    import subprocess
+    import tempfile
+    import shutil
+
+    try:
+        return librosa.load(audio_path, sr=FS, mono=True)
+    except Exception:
+        pass
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if ffmpeg_bin is None:
+        raise RuntimeError(f"Cannot decode {audio_path}: librosa failed and ffmpeg not found")
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        subprocess.run(
+            [ffmpeg_bin, "-y", "-i", audio_path, "-ar", str(FS), "-ac", "1", tmp_path],
+            capture_output=True,
+            timeout=15,
+            check=True,
+        )
+        return librosa.load(tmp_path, sr=FS, mono=True)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 def get_audio_embedding(audio_array):

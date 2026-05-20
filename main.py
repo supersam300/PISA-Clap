@@ -1,15 +1,39 @@
 import os
+import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
-AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "audio_recs"))
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
+AUDIO_DIR = os.path.abspath(os.path.join(_PROJECT_ROOT, "audio_recs"))
+ANALYZE_TIMEOUT_SEC = float(os.getenv("ANALYZE_TIMEOUT_SEC", "30"))
+GRADIO_SERVER_NAME = os.getenv("GRADIO_SERVER_NAME", "127.0.0.1")
+_gradio_port_env = os.getenv("GRADIO_SERVER_PORT")
+if _gradio_port_env is None or _gradio_port_env.strip() == "":
+
+    GRADIO_SERVER_PORT = None
+else:
+    try:
+        GRADIO_SERVER_PORT = int(_gradio_port_env)
+    except ValueError:
+        GRADIO_SERVER_PORT = None
+
+_analyze_maintenance = None
+
+
+def _get_analyzer():
+    global _analyze_maintenance
+    if _analyze_maintenance is not None:
+        return _analyze_maintenance
+    from model.maintenance import analyze_maintenance
+    _analyze_maintenance = analyze_maintenance
+    return _analyze_maintenance
 
 def gradio_maintenance(audio):
     try:
-        from model.maintenance import analyze_maintenance
-    except ModuleNotFoundError as e:
-        msg = f"Missing dependency: {e.name}. Install requirements and try again."
-        return msg, "UNKNOWN", "N/A", msg, [], {"error": msg}
+        analyze = _get_analyzer()
     except Exception as e:
         msg = f"Failed to initialize maintenance analyzer: {e}"
         return msg, "UNKNOWN", "N/A", msg, [], {"error": msg}
@@ -19,11 +43,18 @@ def gradio_maintenance(audio):
         return msg, "UNKNOWN", "N/A", msg, [], {"error": msg}
 
     try:
-        report = analyze_maintenance(audio)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(analyze, audio)
+            report = future.result(timeout=ANALYZE_TIMEOUT_SEC)
+    except FutureTimeoutError:
+        msg = (
+            f"Analysis timed out after {ANALYZE_TIMEOUT_SEC:.0f}s. "
+            "Try a shorter clip or disable Gemini diagnosis."
+        )
+        return msg, "UNKNOWN", "N/A", msg, [], {"error": msg}
     except Exception as e:
         msg = f"Failed to analyze audio: {e}"
         return msg, "UNKNOWN", "N/A", msg, [], {"error": msg}
-
     issue = "YES" if report["issue_detected"] else "NO"
     status_md = (
         f"### Maintenance Decision\n"
@@ -44,10 +75,10 @@ def gradio_maintenance(audio):
 
 
 def build_gradio_app(gr):
-    with gr.Blocks(title="CLAP Maintenance Analyzer") as demo:
+    with gr.Blocks(title="Maintenance Analyzer") as demo:
         gr.Markdown(
-            "# CLAP Maintenance Analyzer\n"
-            "Upload or record machine audio to get CLAP-based issue detection, maintenance priority, and  diagnosis."
+            "# Maintenance Analyzer\n"
+            "Upload or record machine audio to get issue detection, maintenance priority, and diagnosis."
         )
 
         with gr.Row():
@@ -55,6 +86,8 @@ def build_gradio_app(gr):
                 type="filepath",
                 label="Input Audio",
                 sources=["upload", "microphone"],
+                editable=False,
+                waveform_options=gr.WaveformOptions(sample_rate=16000),
             )
             with gr.Column():
                 analyze_btn = gr.Button("Analyze Audio", variant="primary")
@@ -64,7 +97,7 @@ def build_gradio_app(gr):
             status_md = gr.Markdown(label="Maintenance Decision")
             with gr.Column():
                 priority_box = gr.Textbox(label="Priority", interactive=False)
-                top_signal_box = gr.Textbox(label="Top CLAP Signal", interactive=False)
+                top_signal_box = gr.Textbox(label="Top Signal", interactive=False)
 
         diagnosis_box = gr.Textbox(
             label="Diagnosis",
@@ -89,6 +122,12 @@ def build_gradio_app(gr):
             fn=lambda: ("", "", "", "", [], {}),
             inputs=[],
             outputs=[status_md, priority_box, top_signal_box, diagnosis_box, ranking_df, raw_json],
+        )
+        
+        custom_lables = gr.Dropdown(
+            label="Custom Labels",
+            choices=["label1", "label2", "label3"],
+            interactive=True,
         )
 
     return demo
@@ -136,4 +175,10 @@ if __name__ == "__main__":
 
         print("Starting Gradio Interface. Use --loop to run continuous recording.")
         demo = build_gradio_app(gr)
-        demo.launch()
+        launch_kwargs = {
+            "max_file_size": "50mb",
+            "server_name": GRADIO_SERVER_NAME,
+        }
+        if GRADIO_SERVER_PORT is not None:
+            launch_kwargs["server_port"] = GRADIO_SERVER_PORT
+        demo.launch(**launch_kwargs)
