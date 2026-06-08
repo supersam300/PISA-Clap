@@ -86,6 +86,4 @@ python main.py --loop
 - `model/`: Directory containing the ML logic. Includes `clap.py` and data `augmentation.py`.
 - `req.txt`: Required pip dependencies.
 
-## License
 
-[Add appropriate license info here]
