@@ -1,11 +1,10 @@
 # PISA-Clap
 
-PISA-Clap is an audio recording and classification project that utilizes the CLAP (Contrastive Language-Audio Pretraining) model to analyze audio. It features both a continuous background recording mode and a user-friendly web interface powered by Gradio.
+PISA-Clap is an audio recording and classification project that utilizes the CLAP (Contrastive Language-Audio Pretraining) model to analyze audio. 
 
 ## Features
 
 - **Continuous Audio Analysis**: Run in a loop to continuously record audio, classify it, and clean up temporary audio files.
-- **Web Interface**: Easy-to-use Gradio web app to upload or record audio clips for instant classification.
 - **CLAP Integration**: Powered by Hugging Face Transformers for state-of-the-art audio-text understanding.
 
 ## Requirements
