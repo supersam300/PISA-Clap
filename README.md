@@ -57,9 +57,7 @@ docker run --rm -p 7860:7860 pisa-clap:latest
 Then open `http://localhost:7860` in your browser.
 
 Notes:
-- This Docker setup is CPU-first for portability across Mac/Linux/Windows hosts.
 - The CLAP model (`laion/clap-htsat-unfused`) is downloaded on first run, so startup can be slower the first time.
-- Optional Gemini diagnosis still requires relevant provider credentials via environment variables.
 - NVIDIA GPU support can be added later with a CUDA base image/runtime, but is not the default in this setup.
 
 ## Usage
